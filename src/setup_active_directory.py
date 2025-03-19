@@ -1,85 +1,41 @@
-import os
+import socket
+import socks
 
-from ldap3 import Server, Connection, ALL, MODIFY_REPLACE
+from active_directory import ActiveDirectory
 
-# Domain details from ENV variables
-AD_DOMAIN_NAME = os.getenv('AD_DOMAIN_NAME', '')
-AD_DOMAIN_TOP_LEVEL_SUFFIX = os.getenv('AD_DOMAIN_TOP_LEVEL_SUFFIX', 'local')
-AD_DOMAIN_ADMIN_USER = os.getenv('AD_DOMAIN_ADMIN_USER', 'Administrator')
-AD_DOMAIN_ADMIN_PASSWORD = os.getenv('AD_DOMAIN_ADMIN_PASSWORD', 'top-sectet-password')
-DNS_DOMAIN_SUFFIX = os.getenv('DNS_DOMAIN_SUFFIX', 'dev.purestorage.com')
+if __name__ == "__main__":
+    # Setup SOCKS5 proxy
+    socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5, 'localhost', 1080)
+    socket.socket = socks.socksocket
 
-# AD Server details
-AD_SERVER = f'ldap://{AD_DOMAIN_NAME}.{DNS_DOMAIN_SUFFIX}'
-ADMIN_USER = f'{AD_DOMAIN_NAME}\\{AD_DOMAIN_ADMIN_USER}'
+    ad = ActiveDirectory()
 
-# Distinguished Names (DNs) - Adjust for your domain structure
-BASE_DN = f'dc={AD_DOMAIN_NAME},dc={AD_DOMAIN_TOP_LEVEL_SUFFIX}'
+    # Ensure Organizational Units exist
+    ad.ensure_ou_exists("Groups")
+    ad.ensure_ou_exists("Users")
 
-# Connect to AD
-server = Server(AD_SERVER, get_info=ALL)
-conn = Connection(server, user=AD_DOMAIN_ADMIN_USER, password=AD_DOMAIN_ADMIN_PASSWORD, auto_bind=True)
+    # Delete existing users & groups
+    ad.delete_object(f'CN=win_user,CN=Users,{ad.base_dn}', 'User')
+    ad.delete_object(f'CN=nfs_daemon,CN=Users,{ad.base_dn}', 'User')
+    ad.delete_object(f'CN=win_users,OU=Groups,{ad.base_dn}', 'Group')
+    ad.delete_object(f'CN=nfs_daemons,OU=Groups,{ad.base_dn}', 'Group')
 
-def create_ad_group(_name, _gid, _description = ''):
-    conn.add(f'cn={_name},ou=Groups,{BASE_DN}',
-             ['top', 'group', 'groupOfNames'],
-             {
-                    'cn': _name,
-                    'sAMAccountName': _name,
-                    'description': _description,
-                    'gidNumber': str(_gid)
-            }
-    )
-    if conn.result['description'] == 'success':
-        print("Group created successfully")
-    else:
-        print("Failed to create group:", conn.result)
+    # Create groups
+    ad.create_group('win_users', 9060, 'Windows Users')
+    ad.create_group('nfs_daemons', 9050, 'NFS Daemons')
 
+    # Create users
+    ad.create_user('win_user', 9060, 'Windows User')
+    ad.create_user('nfs_daemon', 9050, 'NFS Daemon')
 
-def create_ad_user(_name, _uid, _description = ''):
-    conn.add(f'cn={_name},ou=Users,{BASE_DN}',
-             ['top', 'person', 'organizationalPerson', 'user'],
-             {
-                            'cn': _name,
-                            'sAMAccountName': _name,
-                            'userPrincipalName': _name,
-                            'givenName': _name,
-                            'sn': 'User',
-                            'displayName': _name,
-                            'mail': f'{_name}@{DNS_DOMAIN_SUFFIX}',
-                            'gidNumber': str(_uid),
-                            'userAccountControl': '512'
-            }
-    )
-    if conn.result['description'] == 'success':
-        print("User created successfully")
-    else:
-        print("Failed to create user:", conn.result)
+    # Assign users to groups
+    ad.add_user_to_group('win_users', 'win_user')
+    ad.add_user_to_group('nfs_daemons', 'nfs_daemon')
 
+    # Search for a specific user
+    specific_user = ad.search_objects(object_class="user", search_filter="(cn=win_user)",
+                                      attributes=["cn", "sAMAccountName", "mail", "gidNumber", "PrimaryGroupID"])
+    print("Specific User:", specific_user)
 
-def add_user_to_group(_group_name, _user_name, _gid):
-    conn.modify(f'cn={_group_name},ou=Groups,{BASE_DN}', {
-        'member': [(MODIFY_REPLACE, [f'cn={_user_name},ou=Users,{BASE_DN}'])]
-    })
-    if conn.result['description'] == 'success':
-        print("User added to group successfully")
-    else:
-        print("Failed to add user to group:", conn.result)
-    conn.modify(f'cn={_user_name},ou=Users,{BASE_DN}', {
-        'primaryGroupID': [(MODIFY_REPLACE, [str(_gid)])]
-    })
-    if conn.result['description'] == 'success':
-        print("Primary group set successfully")
-    else:
-        print("Failed to set primary group:", conn.result)
-
-create_ad_group(_name='win_users', _gid=9060, _description='Windows Users')
-create_ad_group(_name='nfs_daemons', _gid='9050', _description='NFS Daemons')
-
-create_ad_user(_name='win_user', _uid=9060, _description = 'Windows User')
-create_ad_user(_name='nfs_daemon', _uid=9050, _description = 'NFS Daemon')
-add_user_to_group(_group_name='win_users', _user_name='win_user', _gid=9060)
-add_user_to_group(_group_name='nfs_daemons', _user_name='nfs_daemon', _gid=9050)
-
-# Close the connection
-conn.unbind()
+    # Close the connection
+    ad.close()

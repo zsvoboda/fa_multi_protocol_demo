@@ -27,7 +27,7 @@ def cleanup(fa):
 
     # Delete exports and policies
     fa.delete_export(export_name='multi', policy_name='nfs_multi_protocol_access_policy')
-    fa.delete_export(export_name='EXCHANGE', policy_name='smb_multi_protocol_access_policy')
+    fa.delete_export(export_name='multi', policy_name='smb_multi_protocol_access_policy')
 
     # Delete file system
     fa.destroy_file_system(name='multi_protocol_file_system')
@@ -44,4 +44,4 @@ FA_API_TOKEN = os.getenv("FA_DEMO_API_TOKEN")
 fa = FlashArray(api_token=FA_API_TOKEN, array_host=FA_HOSTNAME)
 fa.authenticate()
 setup(fa)
-cleanup(fa)
+#cleanup(fa)
